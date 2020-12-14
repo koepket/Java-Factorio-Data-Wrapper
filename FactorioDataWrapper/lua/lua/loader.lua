@@ -1,31 +1,19 @@
-require "fixmodule"
+defines = require("lib/defines")
+serpent = require("lib/serpent")
+require("dataloader")
 
-local inspect = require "inspect"
+function log(s)
+  print(s)
+end
 
-defines = {
-    difficulty_settings = {
-        recipe_difficulty = {
-            normal = "normal",
-            expensive = "expensive"
-        },
-        technology_difficulty = {
-            normal = "normal",
-            expensive = "expensive"
-        }
-    },
-    direction = {
-        north = 0,
-        east = 2,
-        south = 4,
-        west = 6
-    }
-}
+function localised_print(s)
+  print(serpent.line(s))
+end
 
-require "dataloader"
--- require "core.data"
--- require "base.data"
--- require "base.data-updates"
-
-data.raw["gui-style"] = {
-    default = {}
-}
+function table_size(t)
+  local count = 0
+  for _ in pairs(t) do
+    count = count + 1
+  end
+  return count
+end

@@ -34,6 +34,7 @@ import org.luaj.vm2.Globals;
 import org.luaj.vm2.LuaTable;
 import org.luaj.vm2.LuaValue;
 import org.luaj.vm2.lib.BaseLib;
+import org.luaj.vm2.lib.Bit32Lib;
 import org.luaj.vm2.lib.DebugLib;
 import org.luaj.vm2.lib.ResourceFinder;
 import org.luaj.vm2.lib.jse.JsePlatform;
@@ -81,6 +82,9 @@ public class FactorioData {
 
 	public static BufferedImage getIcon(DataPrototype prototype) {
 		String name = prototype.getName();
+		if (prototype.lua().get("type").checkjstring().equals("technology")) {
+			name += ".tech"; // HACK
+		}
 		return modIconCache.computeIfAbsent(name, n -> {
 			LuaValue iconLua = prototype.lua().get("icon");
 			if (!iconLua.isnil()) {
@@ -111,7 +115,7 @@ public class FactorioData {
 				} else if (!iconsMipmaps.isnil() && iconsMipmaps.toint() > 0) {
 					// sanity check is also in base game and gives warning in log
 					if (layer.getWidth() == layerIconSize) {
-						System.err.println("Icon layer of '" + name
+						System.err.println("Icon layer using '" + l.get("icon").tojstring()
 								+ "' has mimaps defined but isnt big enough to actually be using mipmaps.");
 					} else {
 						layer = layer.getSubimage(0, 0, layerIconSize, layerIconSize);
@@ -123,15 +127,20 @@ public class FactorioData {
 					layer = Utils.tintImage(layer, Utils.parseColor(tintLua));
 				}
 
+				int expectedSize = 32; // items and recipes
+				if (prototype.lua().get("type").checkjstring().equals("technology"))
+					expectedSize = 128;
+
 				/*
-				 * All vanilla icons are defined with icon size 64. However, the game "expects"
-				 * icons to have a size of 32. Because these sizes differ, we observe the
-				 * behavior that the game does not apply shift and scale values directly.
-				 * Instead, shift and scale are multiplied by real_size / expected_size. In our
-				 * case, that means we have to multiply them by 2, because 64 / 32 = 2; this
-				 * value is represented by the below variable.
+				 * All vanilla item and recipe icons are defined with icon size 64 (technologies
+				 * with 256). However, the game "expects" icons to have a size of 32 (or 128 for
+				 * technologies). Because these sizes differ, we observe the behavior that the
+				 * game does not apply shift and scale values directly. Instead, shift and scale
+				 * are multiplied by real_size / expected_size. In the case of items case, that
+				 * means we have to multiply them by 2, because 64 / 32 = 2; this value is
+				 * represented by the below variable.
 				 */
-				int scaleAndShiftScaling = layerIconSize / 32;
+				int scaleAndShiftScaling = layerIconSize / expectedSize;
 
 				double scale = l.get("scale").optdouble(1.0);
 				// scale has to be multiplied by scaleAndShiftScaling, see above
@@ -205,9 +214,6 @@ public class FactorioData {
 
 		File[] luaFolders = new File[] { //
 				new File(factorio, "data/core/lualib"), //
-				// new File(factorio, "data"), //
-				// new File(factorio, "data/core"), //
-				// new File(factorio, "data/base"), //
 		};
 
 		JSONArray modExcludeJson = Config.get().optJSONArray("mod-exclude");
@@ -237,6 +243,7 @@ public class FactorioData {
 		Globals globals = JsePlatform.standardGlobals();
 		globals.load(new BaseLib());
 		globals.load(new DebugLib());
+		globals.load(new Bit32Lib());
 		globals.load(new StringReader("package.path = package.path .. ';" + luaPath + "'"), "initLuaPath").call();
 		globals.finder = new ResourceFinder() {
 			@Override
@@ -266,6 +273,19 @@ public class FactorioData {
 							.getResourceAsStream(filename.replace(SEARCH_RESOURCE, "lua"));
 					// System.out.println(stream != null);
 					return stream;
+				} else if (filename.startsWith("__") && (filename.indexOf("__", 2) > -1)) {
+					int matchEnd = filename.indexOf("__", 2);
+					String modName = filename.substring(2, matchEnd);
+					Optional<Mod> mod = modLoader.getMod(modName);
+					if (!mod.isPresent()) {
+						throw new IllegalStateException("Mod does not exist: " + modName);
+					}
+					try {
+						return mod.get().getResource(filename.substring(matchEnd + 2)).orElse(null);
+					} catch (Exception e) {
+						e.printStackTrace();
+						throw new InternalError(e);
+					}
 				} else {
 					File file = new File(filename);
 					// System.out.println(file.exists());
@@ -283,6 +303,14 @@ public class FactorioData {
 				.call();
 
 		List<Mod> loadOrder = modLoader.getModsInLoadOrder();
+
+		LuaValue modsTable = LuaValue.tableOf(0, loadOrder.size());
+		for (Mod mod : loadOrder) {
+			ModInfo info = mod.getInfo();
+			if (!info.getName().equals("core"))
+				modsTable.set(info.getName(), info.getVersion());
+		}
+		globals.set("mods", modsTable);
 
 		loadStage(globals, loadOrder, currentMod, "/settings.lua");
 		loadStage(globals, loadOrder, currentMod, "/settings-updates.lua");
